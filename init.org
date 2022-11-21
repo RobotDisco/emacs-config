@@ -3,6 +3,9 @@
 #+TITLE: GNU Emacs Configuration
 #+AUTHOR: Gaelan D'costa
 
+* *DEPRECATED AS OF 2022/11/20*
+*Config has been merged into http://github.com/RobotDisco/nix-config*
+
 * Welcome!
 Gaelan D'costa's GNU emacs config; there are many like it, but this one is mine.
 
