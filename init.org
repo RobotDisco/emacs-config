@@ -1,0 +1,1485 @@
+# -*- mode: org; coding: utf-8; -*-
+#+TITLE: GNU Emacs Configuration
+#+AUTHOR: Gaelan D'costa
+
+* Welcome!
+Gaelan D'costa's GNU emacs config; there are many like it, but this one is mine.
+
+Eventually I will understand my own config enough to explain it in a cohesive way.
+
+This configuration is built as a nix package; as such, it assumes that nix has pre-supplied all necessary packages (which ironically, are parsed out of this file.) As such, it is also paired with whatever version of emacs that this package includes. Currently, this is GNU Emacs 28.1
+
+** Inspirations
+- [[https://github.com/daviwil/emacs-from-scratch/][Emacs from Scratch]] is a great series of youtube videos where the author clearly puts a lot of thoughts and well-principled thought into his configuration principles.
+
+- I am super indebted to whoever [[http://github.com/terlar/emacs-config][Terlar]] is, their nix package and structure is one I found a lot of insight about how to write nix packages from.
+
+** Key package choices
+- package management :: [[https://github.com/jwiegley/use-package][use-package]]
+- X Window Managemer :: [[https://github.com/ch11ng/exwm][exwm]]
+- completion
+  - Completion-in-buffer :: [[https://github.com/minad/corfu][corfu]]
+  - Completion-in-minibuffer :: [[https://github.com/minad/vertico][vertico]]
+  - regex / fuzzy / multi-segment searching :: [[https://github.com/oantolin/orderless][orderless]]
+- version control (git) :: [[https://magit.vc/][magit]]
+- structured editing :: [[https://github.com/Fuco1/smartparens][smartparens]]
+- project management :: [[https://github.com/bbatsov/projectile][projectile]]
+- citation Management :: [[https://github.com/emacs-citar/citar][citar]]
+- knowledge/idea management :: [[https://www.orgroam.com/][org-roam]]
+
+* Early Initialization
+
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  ;;; early-init.el --- Early Initialization -*- lexical-binding: t; -*-
+
+  ;; Author: Gaelan D'costa <gdcosta@gmail.com>
+  ;; Version: 2.0
+  ;; Package-Requires: ((emacs "29.1"))
+  ;; Keywords: configuration
+  ;; URL: https://github.com/RobotDisco/nix-config/packages/emacs
+
+  ;;; Commentary:
+
+  ;; This file contains early initialization settings for Emacs.
+  ;; These configurations are designed to optimize performance and
+  ;; minimize load time, and are run before our main configuration logic.
+
+  ;;; Code:
+
+#+END_SRC
+
+** Version Sentinal
+
+I am not sure if this config will work with older versions of emacs, so I'll abort if the running version of emacs is older than a known good version.
+
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (let ((minver "29.1"))
+    (when (version< emacs-version minver)
+      (error "Your Emacs is too old -- this config requires v%s or higher" minver)))
+#+END_SRC
+
+** Startup Performance
+*** Garbage Collection speedup
+I saw a config where the author temporarily set garbage collection thresholds for speed during initialization, presumably to minimize GC overhead at startup.
+
+When emacs has finished initalizing, it runs a hook we've set up to restore a more aggressive threshold.
+
+This is a pattern I have seen various people use, so it seems like a good idea.
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (let (;; We will restore these values eventually.
+        (normal-gc-cons-threshold gc-cons-threshold)
+        (normal-gc-cons-percentage gc-cons-percentage)
+        ;; Set garbage collection threshold to infinity bytes during startup, to
+        ;; maximize performance and minimize collection freezes.
+        (init-gc-cons-threshold most-positive-fixnum)
+        (init-gc-cons-percentage 1.0))
+    (setq gc-cons-threshold init-gc-cons-threshold
+  	gc-cons-percentage init-gc-cons-percentage)
+    (add-hook 'startup-mode-hook
+  	    (lambda ()
+  	      (setq gc-cons-threshold normal-gc-cons-threshold
+  		    gc-cons-percentage normal-gc-cons-percentage))))
+#+END_SRC
+** Regex-based file logic
+In a similar way, let's temporarily disable emacs' builtin regex-based handler so we can lost files easier during configuration.
+
+We will have to restore it afterwards, otherwise we will lose core functionality.
+
+This is apparently the second-most impactful startup performance hack.
+
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (let (;; Normally, when emacs loads a file, it runs some regexes on the file
+        ;; name to figure out what filename-based logic applies to the file being
+        ;; loaded. During startup, let's disable that, but we'll have to preserve
+        ;; the original hook otherwise we'll permanently break functionality.
+        (normal-file-name-handler-alist file-name-handler-alist))
+    (setq file-name-handler-alist nil)
+    (add-hook 'startup-mode-hook
+  	    (lambda ()
+  	      (setq file-name-handler-alist normal-file-name-handler-alist))))
+#+END_SRC
+
+** Inhibit startup screen and messages.
+Let's keep our startup clean by not displaying our startup message.
+
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (setq inhibit-startup-screen t)
+#+END_SRC
+
+** UI speedups
+Disable implicit window resizing, that should only happen when the user explicitly resizes things
+
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (setq frame-inhibit-implied-resize nil)
+#+END_SRC
+
+Disable unnecessary GUI components on startup.
+
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (setq
+   ;; Disable GUI elements
+   menu-bar-mode nil
+   scroll-bar-mode nil
+   tool-bar-mode nil)
+#+END_SRC
+
+Also, temporarily disable font cache compaction if triggered by garbage collection.
+
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (setq inhibit-compacting-font-caches nil)
+  (add-hook 'emacs-startup-hook
+  	  (lambda ()
+  	    (setq inhibit-compacting-font-caches t)))
+#+END_SRC
+
+** Disable popup dialogs
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (setq use-dialog-box nil)
+#+END_SRC
+
+** Temporarily disable autosave and backups
+While we're starting up, don't autosave or backup files.
+
+We will restore it after we finish loading configuration.
+
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (setq auto-save-default nil
+        make-backup-files nil)
+
+  (add-hook 'emacs-startup-hook
+  	  (lambda ()
+  	    (setq auto-save-default t
+  		  make-backup-files t)))
+#+END_SRC
+
+** Set location of custom file
+Emacs by default manages some forms for variables and faces and places them at the end of =init.el=. Since my =init.el= is generated, this would be difficult to manage.
+
+Why do I write to the null device? This keeps my config immutable.
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (setq custom-file (expand-file-name "custom.el" user-emacs-directory))
+#+END_SRC
+
+** Startup time profiling.
+Let's time and display the amount of time it takes to bring up my Emacs configuration
+
+#+BEGIN_SRC emacs-lisp :tangle early-init.el
+  (add-hook 'emacs-startup-hook
+	    (lambda ()
+	      (message "Emacs ready in %0.03f seconds with %d garbage collections."
+		       (float-time (time-subtract after-init-time
+						  before-init-time))
+		       gcs-done)))
+#+END_SRC
+
+* Base settings
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  ;;; init.el --- Initialization -*- lexical-binding: t; -*-
+#+END_SRC
+
+** Variables
+
+Private an easy way to toggle debug mode which will set certain variables to produce each informative output. It can be set either by providing the environment variable =DEBUG= or start Emacs with =--debug-init=.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (eval-and-compile
+    (when (getenv "DEBUG") (setq init-file-debug t))
+    (setq debug-on-error (and (not noninteractive) init-file-debug)))
+#+END_SRC
+
+Provide XDG-compliant locations for Emacs to store and cache data.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (eval-and-compile
+    (defvar gaelan/data-dir
+      (if (getenv "XDG_DATA_HOME")
+	  (concat (getenv "XDG_DATA_HOME") "/emacs/")
+	(expand-file-name "~/.local/share/emacs/"))
+      "Directory for emacs data")
+
+    (defvar gaelan/cache-dir
+      (if (getenv "XDG_CACHE_HOME")
+	  (concat (getenv "XDG_CACHE_HOME") "/emacs/")
+	(expand-file-name "~/.cache/emacs/"))
+      "Directory for emacs cached data."))
+#+END_SRC
+
+** Package management
+Use generated package autoloads via package-quickstart. The actual packages are provided via the nix package this file is contained in.
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (defvar package-quickstart t)
+#+END_SRC
+
+*** Load path
+Add local and private libraries to ~load-path~.
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (eval-and-compile
+    (setq load-path
+	  (append (delete-dups load-path)
+		  (list (expand-file-name "lisp" user-emacs-directory)
+			(expand-file-name "private" user-emacs-directory)))))
+#+END_SRC
+
+*** use-package
+[[https://github.com/jwiegley/use-package][use-package]] is a wonderful package from John Wiegley which makes downloading and loading and configuring emacs packaging a much more structured affair. It can optionally download missing packages and uses a single macro to load configuration and set up bindings, regular hooks, extension associations, etc... in a consistent way.
+
+The [[https://github.com/nix-community/emacs-overlay][emacs-overlay]] nix package also leverages use-package to know what packages it needs to download when generating an emacs package from this file.
+#+BEGIN_SRC emacs-lisp :tangle yes
+     ;; Since (use-package) is a macro, we don't actually need to load it except
+     ;; when we compile a new bytecode version of our emacs file.
+     (eval-when-compile
+       (require 'use-package))
+     (require 'diminish)                ;; if you use :diminish
+     (require 'bind-key)                ;; if you use :bind
+
+     (eval-and-compile
+       ;; By default if :ensure is non-nil it will use package.el to download the
+       ;; package. We use a custom function to ensure that never happens.
+       (defun gaelan/use-package-ensure-ignore (&rest _args) t)
+       (setq use-package-ensure-function #'gaelan/use-package-ensure-ignore)
+
+       ;; Unless we explicitly want packages loaded eagerly, rely on setting hooks
+       ;; or mod or bindings to generate autoloads to only load the package on
+       ;; demand.
+       (setq use-package-always-defer t)
+       ;; Don't assume hooks have the substring "-hook" at the end.
+       (setq use-package-hook-name-suffix nil))
+
+     ;; If debug mode is on, be more chatty. Otherwise, don't
+     (if init-file-debug
+	 (setq use-package-verbose t
+	       use-package-expand-minimally nil
+	       use-package-compute-statistics t)
+       (setq use-package-verbose nil
+	     use-package-expand-minimally t))
+#+END_SRC
+
+*** Keep ~user-emacs-directory~ clean.
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package no-littering
+    :defer 1
+    :ensure t
+    :init
+    (setq no-littering-etc-directory gaelan/data-dir
+	  no-littering-var-directory gaelan/cache-dir))
+#+END_SRC
+
+** UX
+   Always request confirmation before quitting emacs
+   #+BEGIN_SRC emacs-lisp :tangle yes
+     (setq confirm-kill-emacs #'y-or-n-p)
+   #+END_SRC
+
+   Use =y= and =n= for prompts instead of =yes= and =no=
+   #+BEGIN_SRC emacs-lisp :tangle yes
+     (fset #'yes-or-no-p #'y-or-n-p)
+   #+END_SRC
+
+   Set the default Mac modifier bindings to mirror Linux bindings
+   #+BEGIN_SRC emacs-lisp :tangle yes
+     (when (eq system-type 'darwin)
+       (setq mac-option-modifier 'super
+	     mac-command-modifier 'meta))
+   #+END_SRC
+* Appearance
+** Mode line
+*** Position
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (column-number-mode 1)
+  (line-number-mode 1)
+#+END_SRC
+** Margins
+Set the line length to 80 characters. This has to be set via customize rather than seq for reasons I don't understand.
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package emacs
+    :custom
+    (fill-column 80))
+#+END_SRC
+
+Show a line indicating the end of the page, as it were
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (global-display-fill-column-indicator-mode +1)
+#+END_SRC
+** Colour Theme
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package rebecca-theme
+    :ensure t
+    :demand t
+    :config
+    (if (daemonp)
+	(add-hook 'after-make-frame-functions
+		  (lambda (frame)
+		    (with-selected-frame frame
+		      (load-theme 'rebecca t))))
+      (load-theme 'rebecca t)))
+#+END_SRC
+** Highlight parentheses
+Visually separate nested delimiter pairs
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package rainbow-delimiters
+    :ensure t
+      :hook
+      ((clojure-mode-hook
+	emacs-lisp-mode-hook
+	ielm-mode-hook
+	lisp-mode-hook
+	racket-mode
+	scheme-mode-hook)
+       . rainbow-delimiters-mode))
+#+END_SRC
+* Operating System
+I love Emacs so much, I use it as my primary computing environment :)
+** Window Manager
+*** exwm
+#+BEGIN_SRC emacs-lisp :tangle no
+  ;; Assume that if exwm is installed, then we want emacs to handle all
+  ;; pinentry input
+  (use-package pinentry
+    :after (exwm)
+    :ensure t
+    :config
+    (pinentry-start))
+
+  (use-package exwm
+    :defer 0
+    :ensure t
+    :if (eq system-type 'gnu/linux)
+    :custom
+    ;; Set window management key bindings
+    (exwm-input-global-keys
+     `(
+       ;; Reset to line-mode
+       ([?\s-r] . exwm-reset)
+       ;; Switch workspaces
+       ([?\s-w] . exwm-workspace-switch)
+       ;; s-0 is inconvenient, map to s-` and s-esc as well
+       ([?\s-`] . (lambda ()
+		    (interactive)
+		    (exwm-workspace-switch-create 0)))
+       ([s-escape] . (lambda ()
+		       (interactive)
+		       (exwm-workspace-switch-create 0)))
+       ;; Launch application a la dmenu
+       ([?\s-p] . (lambda (command)
+		    (interactive (list (read-shell-command "$ ")))
+		    (start-process-shell-command command nil command)))
+       ;; Switch to numbered workspace.
+       ,@(mapcar (lambda (i)
+		   `(,(kbd (format "s-%d" i)) .
+		     (lambda ()
+		       (interactive)
+		       (exwm-workspace-switch-create ,i))))
+		 (number-sequence 0 9))))
+    ;; translate emacs keybindings into CUA ones for X applications. This allows
+    ;; some uniformity between emacs and most X apps.
+    (exwm-input-simulation-keys
+     '(;; movement
+       ([?\C-b] . [left])
+       ([?\M-b] . [C-left])
+       ([?\C-f] . [right])
+       ([?\M-f] . [C-right])
+       ([?\C-p] . [up])
+       ([?\C-n] . [down])
+       ([?\C-a] . [home])
+       ([?\C-e] . [end])
+       ([?\M-v] . [prior])
+       ([?\C-v] . [next])
+       ([?\C-d] . [delete])
+       ([?\C-k] . [S-end delete])
+       ;; cut/paste
+       ([?\C-w] . [?\C-x])
+       ([?\M-w] . [?\C-c])
+       ([?\C-y] . [?\C-v])))
+    ;; Start with four workspaces on start
+    (exwm-workspace-number 4)
+    ;; Handle specific apps in particular window management ways.
+    (exwm-manage-configurations '(((string= exwm-instance-name "brave-browser") workspace 2)
+				  ((string= exwm-instance-name "signal") workspace 3)
+				  ((string= exwm-instance-name "slack") workspace 3)
+				  ((string= exwm-instance-name "whatsapp-for-linux") workspace 3)))
+    :hook ((exwm-update-class-hook .
+				   (lambda ()
+				     "rename buffer names to their associated X class name."
+				     (exwm-workspace-rename-buffer exwm-class-name)))))
+
+  (use-package exwm-randr
+    :ensure nil
+    :defer 0
+    :after (exwm)
+    :init
+    (defun gaelan/exwm-randr-screen-change-hook ()
+      "Run autorandr whenever exwm detects a screen change"
+      )
+    ;; Assign particular workspaces to particular monitors by default
+    (setq exwm-randr-workspace-monitor-plist
+	  '(0 "DP-2-2-1" 1 "DP-2-2-1" 2 "DP-1-1-1" 3 "DP-1-1-1"))
+    :hook ((exwm-randr-screen-change-hook .
+					  (lambda ()
+					    "Run autorandr whenever exwm detects a screen change"
+					    (start-process-shell-command
+					     "autorandr" nil "autorandr --change"))))
+    :config
+    (exwm-randr-enable))
+#+END_SRC
+*** ediff workaround
+ediff doesn't render correctly in exwm; fix by creating "Ediff Control Panel"
+in a floating frame rather than an Emacs window.
+#+BEGIN_SRC emacs-lisp :tangle no
+  (with-eval-after-load 'ediff-wind
+    (eval-when-compile
+      (require 'ediff-wind))
+    (setq ediff-control-frame-parameters
+	  (cons '(unsplittable . t) ediff-control-frame-parameters)))
+#+END_SRC
+** Multimedia keys
+Emacs should handle keyboard media shortcuts
+#+BEGIN_SRC emacs-lisp :tangle no
+  (use-package desktop-environment
+    :ensure t
+    :defer 1
+    :after (exwm)
+    :init
+    (setq desktop-environment-screenlock-command "i3lock -n -c 746542")
+    :config
+    (desktop-environment-mode))
+#+END_SRC
+
+** Clipboard management
+Integrate with external programs that handle X11/Wayland clipboards
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package xclip
+    :ensure t
+    :defer 2
+    :config
+    (xclip-mode +1))
+#+END_SRC
+** System messeger
+Sometimes emacs wants to tell us something; we can integrate this with Linux'
+DBUS or OSX' notifier framework
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package alert
+    :ensure t
+    :custom (alert-default-style (if (eq system-type 'darwin)
+  				   'osx-notifier
+  				 'notifications)))
+#+END_SRC
+* Completion / Minibuffer
+** Consult
+Enhance emacs commands based on completion
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package consult
+    :demand t
+    :ensure t)
+#+END_SRC
+** Corfu
+Completion popups in the regular buffer
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package corfu
+    :defer 1
+    :commands (corfu-mode global-corfu-mode)
+    :ensure t
+    :hook ((eshell-mode-hook . (lambda ()
+				 (setq-local corfu-auto nil)
+				 (corfu-mode))))
+    :config
+    (global-corfu-mode))
+#+END_SRC
+** Embark
+Run commands based on selections in the completion buffer.
+
+This is part of the vertico stack.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package embark
+    :ensure t
+    :bind (("C-." . emback-act)
+  	 ("C-;" . embark-dwim)
+  	 ;; A better describe-bindings
+  	 ("C-h B" . embark-bindings)))
+#+END_SRC
+** Marginalia
+Add annotations to minibuffer completions to provide you with more information about the displayed options
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package marginalia
+    :demand t
+    :ensure t
+    :commands (marginalia-mode)
+    :bind (:map minibuffer-local-map
+		("M-A" . marginalia-cycle))
+    :init
+    (marginalia-mode))
+#+END_SRC
+** Orderless
+Enable helm-like searching via completion frameworks, where I can filter
+candidates by multiple regex patterns separated by a space.
+
+The default completions in emacs 28 are as follows:
+
+basic :: foo|bar looks for all completions that have foo at the front, bar at
+the end. It matches "foo*bar"
+
+emacs22 :: foo|bar looks for all foo* candidates then shoves var onto the end.
+
+partial-completion can complete multiple words, which one given as a prefix. It
+will only match completions with matching prefix in the order of the prefixes
+that were given. /u/mo/s will only match phrases that look like
+"/usr/monnier/src" not "/monier/user/src".
+
+So we add orderless, which allows us to complete against multiple words, but in
+any order. For example, matching against /u/mo/s will match both
+"/usr/monier/src" and "/usr/src/monier".
+
+There are cases where orderless won't work, so we use basic as a fallback.
+
+Tramp mode doesn't handle orderless well (because it involves iterating over
+directory tree combination across the wire, so specifically for file navigation
+we try for basic first and partial-completion after so we can get partial
+intelligence without expending unnecessary effort.
+
+#+BEGIN_SRC elisp :tangle yes
+  (use-package orderless
+    :defer 1
+    :ensure t
+    :custom
+    ;; Fallback to basic for completions that depend on dynamic completion
+    ;; tables, whatever that is.
+    (completion-styles '(orderless basic))
+    ;; TRAMP can't use orderless at all, so override it to use basic and
+    ;; partial completion (like /u/s/l for /usr/share/local)
+    (completion-category-overrides '((file (styles basic partial-completion)))))
+#+END_SRC
+** Vertico
+Vertico adds a good minibuffer UX to Emacs' default completion framework.
+
+The defaults in Emacs 28 (~fido-mode~, ~vertical-fido-mode~) do not make it
+easy for me to see potential options in various contexts, I have found.
+
+Vertico isn't the regular tab-based completion.  It pops up a menu,
+and you can navigate up and down.  A nice thing about it is you can
+use C-p and C-n to pick the candidate you want instead of
+contorting your input to match what you want.
+
+#+BEGIN_SRC elisp :tangle yes
+  (use-package vertico
+    :commands vertico-mode
+    :defer 1
+    :ensure t
+    :custom
+    ;; I find it annoying I try to create a new file and the vertico prompt
+    ;; chooses the first existing selection; prefer the prompt value isntead.
+    (vertico-preselect 'prompt)
+    :config
+    (vertico-mode +1))
+
+  ;; Save sessionbuffer history
+  ;; Vertico uses this to prefer popular choices when listing.
+  (use-package savehist
+    :defer 2
+    :config
+    (savehist-mode))
+
+  ;; Some recommended vertico UX settings
+  ;; A few more useful configurations...
+  (use-package emacs
+    :init
+    ;; Emacs 28: Hide commands in M-x which do not work in the current mode.
+    ;; Vertico commands are hidden in normal buffers.
+    (setq read-extended-command-predicate
+  	  #'command-completion-default-include-p))
+
+#+END_SRC
+** which-key
+When you start a keybinding, list possible completions are and what they do
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package which-key
+    :ensure t
+    :defer 1
+    :commands (which-key-mode)
+    :config
+    (which-key-mode))
+#+END_SRC
+* Functionality
+** Reverting
+Automatically revert when a file changes on disk; this happens a lot given my files are managed in Seafile
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package emacs
+    :bind (("s-u" . revert-buffer))
+    :ensure nil
+    :hook ((after-load-hook . (lambda ()
+				(global-auto-revert-mode +1)))))
+#+END_SRC
+** Spellchecking
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package emacs
+    :defer 2
+    :hook ((org-mode . (lambda ()
+			 (flyspell-mode +1)))
+	   (prog-mode . (lambda ()
+			(flyspell-prog-mode)))))
+#+END_SRC
+** Project Management
+
+Projectile is a framework for managing (usually) software development projects in a standard way, so that the same keybindings can be used to test projects, compile them, etc...
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package projectile
+    :ensure t
+    :defer 2
+    :commands projectile-mode
+    :config
+    (projectile-mode +1)
+    :bind (:map projectile-mode-map
+		("C-c p" . projectile-command-map)))
+#+END_SRC
+
+** File Browsing
+A tree-based file browser for file navigation.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package treemacs
+    :ensure t
+    :commands treemacs)
+#+END_SRC
+
+Handle projects managed by projectile as well.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package treemacs-projectile
+    :ensure t
+    :after (treemacs projectile)
+    :commands treemacs-projectile)
+#+END_SRC
+
+Use treemacs for code navigation as well.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package lsp-treemacs
+    :after (treemacs lsp)
+    :ensure t
+    :defer 2
+    :config
+    (lsp-treemacs-sync-mode 1))
+#+END_SRC
+** Structured Editing
+We use smartparens for structured editing like Ruby blocks or lisp s-expressions
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package smartparens
+    :ensure t
+    :commands (smartparens-global-mode
+	       sp-use-paredit-bindings
+	       sp-use-smartparens-bindings)
+    :hook ((clojure-mode-hook
+	    emacs-lisp-mode-hook
+	    ielm-mode-hook
+	    lisp-mode-hook
+	    racket-mode-hook
+	    scheme-mode-hook)
+	   . smartparens-strict-mode)
+    :defer 2
+    :config
+    (require 'smartparens-config)
+    (sp-use-paredit-bindings)
+    (sp-use-smartparens-bindings)
+    (smartparens-global-mode))
+#+END_SRC
+** grepping
+[[https://blog.burntsushi.net/ripgrep/][ripgrep]] is a grep replacement written in Rust. It is more performant and more powertful than grep.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package rg
+    :bind (("C-c s" . rg-menu))
+    :ensure t)
+#+END_SRC
+** Encryption
+Support encryption as the basis of a number of functions
+
+- encrypting and decrypting entire files
+- supporting encryption in other packages
+- supporting direct GnuPG pinentry in emacs
+
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package emacs
+    :ensure nil
+    :custom
+    (epg-pinentry-mode 'loopback)
+    :config
+    (epa-file-enable)
+    (setq epg-file-encrypt-to '("gdcosta@gmail.com"
+  				"gaelan@tulip.com")))
+#+END_SRC
+* Software Development
+** envrc
+Project-specific environment variables via =direnv=
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package direnv
+    :ensure t
+    :defer 1
+    :commands (direnv-mode)
+    :config
+    (direnv-mode))
+#+END_SRC
+
+** editorconfig
+A editor-agnostic way to maintain project coding styles
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package editorconfig
+    :ensure t
+    :defer 1
+    :config
+    (editorconfig-mode 1))
+#+END_SRC
+
+** flycheck
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package flycheck
+    :ensure t
+    :defer 2
+    :commands global-flycheck-mode
+    :config
+    (global-flycheck-mode))
+#+END_SRC
+** Just task runner
+Like Make, but less warts
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  ;; Language support
+  (use-package just-mode
+    :ensure t
+    :mode "\\[Jj\\]ustfile")
+
+  ;; Run targets from within Emacs
+  (use-package justl
+    :ensure t
+    :commands (justl))
+#+END_SRC
+** Language Server Protocol
+IDE-like functionality such as intellisense, debugging
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package lsp-mode
+    :ensure t
+    :commands (lsp lsp-deferred)
+    :init
+    (defun gaelan/lsp-mode-setup-completion ()
+  	;; Set LSP up to use orderless
+  	(setf (alist-get 'styles (alist-get 'lsp-capf completion-category-defaults))
+  	      '(orderless)))
+    :custom
+    (lsp-completion-provider :none) ;; we use Corfu
+    :hook ((lsp-completion-mode . gaelan/lsp-mode-setup-completion)
+  	 (lsp-mode . lsp-enable-which-key-integration)
+  	 (prog-mode . lsp-deferred)))
+
+  (use-package lsp-ui
+    :ensure t
+    :defer 2
+    :after (lsp-mode))
+#+END_SRC
+** Version Control
+Nicer Git support
+*** magit
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package magit
+    :ensure t
+    :bind (("C-x g" . magit-status)
+  	 ("C-c g" . magit-dispatch)
+  	 ("C-c f" . magit-file-dispatch))
+    :config
+    ;; We need to set some environment variables so that git will work properly
+    ;; with yubikeys. We also have to strip extra whitespace.
+    (setenv "SSH_AUTH_SOCK" (string-chop-newline
+  			   (shell-command-to-string
+  			    "gpgconf --list-dirs agent-ssh-socket")))
+    :custom
+    (magit-wip-mode t))
+#+END_SRC
+
+Have nicer integrations with online git sites like gitlab and github
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package forge
+    :ensure t
+    :defer 2
+    :after magit
+    :config
+    ;; Tulip's gitlab instance
+    (add-to-list 'forge-alist '("git.internal.tulip.io" "git.internal.tulip.io/api/v4" "git.internal.tulip.io" forge-gitlab-repository)))
+#+END_SRC
+** Vibe Coding
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package aidermacs
+    :ensure t
+    :bind ("C-c v" . aidermacs-transient-menu))
+
+  (use-package aider
+    :ensure t
+    :bind ("C-c z" . aider-transient-menu))
+
+  (use-package ob-aider
+    :ensure t
+    :after (org)
+    :config
+    (org-babel-do-load-languages
+     'org-babel-load-languages
+     (append org-babel-load-languages '((aider . t)))))
+#+END_SRC
+* Programming Language support / environments
+** C/C++
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package ccls
+    :ensure t
+    :after lsp
+    :hook ((c-mode c++-mode objc-mode cuda-mode) . (lambda ()
+						      (require 'ccls)
+						      (lsp-deferred))))
+#+END_SRC
+
+** Elm
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package elm-mode
+    :ensure t
+    :mode "\\.elm\\'")
+#+END_SRC
+
+** Java
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package lsp-java
+    :ensure t
+    :mode "\\.java\\'"
+    :after lsp)
+#+END_SRC
+
+** Kotlin
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package kotlin-mode
+    :ensure t
+    :mode "\\.kts?\\'")
+#+END_SRC
+
+** Nix
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package nix-mode
+    :ensure t
+    :mode "\\.nix\\'")
+#+END_SRC
+** Clojure
+
+Support flycheck syntax checking
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package flycheck-clj-kondo
+    :after (clojure-mode flycheck)
+    :hook (clojure-mode-hook . (lambda ()
+				 (require 'flycheck-clj-kondo)))
+    :ensure t)
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package clojure-mode
+    :mode (("\\.\\(clj\\|bb\\)\\'" . clojure-mode)
+	   ("\\.cljs\\'" . clojurescript-mode)
+	   ("\\.cljc\\'" . clojurec-mode))
+    :ensure t)
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package cider
+    :ensure t
+    :bind ("C-c C-x C-j C-j" . cider-jack-in))
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp :tangle no
+  (use-package clj-refactor
+    :commands clj-refactor-mode
+    :after (cider)
+    :hook (cider-mode . (lambda ()
+			  (clj-refactor-mode 1)))
+    :ensure t)
+#+END_SRC
+** Idris
+#+BEGIN_SRC emacs-lisp :tangle yes
+  ;; The book "Type-Driven Development with Idris" still uses Idris 1
+  (use-package idris-mode
+      :ensure t
+      :mode "\\.idr\\'")
+#+END_SRC
+** PHP
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package php-mode
+    :ensure t
+    :mode "\\.php\\'")
+#+END_SRC
+** Racket / Scheme
+#+BEGIN_SRC emacs-lisp :tangle yes
+  ;; Core REPL environment
+  (use-package geiser
+    :commands (run-geiser)
+    :ensure t)
+
+  ;; Anticipated Scheme runtimes
+  (use-package geiser-racket
+    :after (geiser)
+    :ensure t)
+
+  ;; Used by Lisp in Small Pieces textbook
+  (use-package geiser-gambit
+    :after (geiser)
+    :ensure t)
+
+  (use-package geiser-guile
+    :after (geiser)
+    :ensure t)
+
+  ;; Racket language support
+  (use-package racket-mode
+    :ensure t
+    :mode "\\.rkt\\'")
+#+END_SRC
+** Rust
+#+BEGIN_SRC emacs-lisp :tangle no
+  (use-package rustic
+    :ensure t
+    :mode (("\\.rs\\'" . rustic-mode)))
+#+END_SRC
+** Terraform
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package terraform-mode
+      :ensure t
+      :mode "\\.tf\\'")
+#+END_SRC
+** YAML
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package yaml-mode
+    :ensure t
+    :mode "\\.ya?ml\\'")
+#+END_SRC
+* SRE / Devops
+** Kubernetes
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package kubernetes
+    :ensure t
+    :commands kubernetes-overview)
+#+END_SRC
+** VTerm
+A more performant terminal that can handle interactive programs
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package vterm
+    :commands (vterm vterm-other-window)
+    :ensure t)
+#+END_SRC
+* Document editing and viewing
+** EPUB books
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package nov
+    :ensure t
+    :mode ("\\.epub\\'" . nov-mode))
+#+END_SRC
+
+** LaTeX
+Support LaTeX
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package auctex
+    :ensure t
+    :mode "\\.tex\\'")
+#+END_SRC
+** PDF  documents
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package pdf-tools
+    :ensure t
+    :mode ("\\.pdf\\'" . pdf-view-mode))
+#+END_SRC
+* Finance?
+Let's use Emacs for accounting now. Let's try Ledget
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package ledger-mode
+    :ensure t
+    :mode ("\\.\\(h?ledger\\|journal\\)\\'" . ledger-mode)
+    :custom
+    (ledger-binary-path "hledger-emacs.sh")
+    (ledger-default-date-format "%Y-%m-%d")
+    (ledger-mode-should-check-version nil)
+    (ledger-report-auto-width nil)
+    (ledger-report-links-in-register nil)
+    (ledger-report-native-highlighting-arguments '("--color=always")))
+#+END_SRC
+* Productivity
+** Email handling
+Let's try out two different mail clients and see how I like them.
+
+Note: These don't fetch mail from remote mail hosts like gmail. Instead, they browse and view mail from a local mail store.
+#+BEGIN_SRC emacs-lisp :tangle yes
+  ;; Google requires us to use XOAUTH2 for logging into IMAP and SMTP
+  ;;
+  ;; I use SMTP directly in emacs, so I will have to configure this.
+  ;;
+  ;; Some useful debugging tools
+  ;;
+  ;; credentails file in isolation
+  ;; (auth-source-xoauth2-search "smtp.gmail.com" "gdcosta@gmail.com" "465")
+  ;;
+  ;; whole auth-source / smtp mail logic
+  ;; (auth-source-search :max 1 :host "smtp.gmail.com" :port 465
+  ;;   :user "gdcosta@gmail.com"
+  ;;   :require '(:user :secret) :create t)
+  ;; Remember to clear the cache if mucking around with stuff
+  ;; (auth-source-forget-all-cached)
+
+  (use-package auth-source-xoauth2
+    :ensure t
+    :config
+    ;; Where I store my xoauth credentials.
+    (setq auth-source-xoauth2-creds "~/.config/emacs/xoauth2.el.gpg")
+    ;; Enables xoauth2 source in smtpmail and auth-source
+    (auth-source-xoauth2-enable))
+
+  (use-package smtpmail
+    :ensure nil
+    :custom
+    ;; Send SMTP directly, we don't have a OS-wide MTA running.
+    (send-mail-function 'smtpmail-send-it)
+    (smtpmail-smtp-server "smtp.gmail.com")
+    ;; TL;DR Use "Implicit TLS", most secure encrypted SMTP protocol
+    ;; Port 587 - connection starts unencrypted, client requests encrypted
+    ;; traffic. Called Explicit TLS. Auth happens after encryption established.
+    ;; Port 465 - connection must be encrypted via TLS from the get-go, there
+    ;; is no unencrypted traffic. Called Implicit TLS.
+    ;;
+    ;; The history of which port to use is convoluted, and a lot of advice on
+    ;; the internet is outdated or misinformed. For example, a lot of advice
+    ;; claims that port 465 is for an older encryption protocol, SSL, and 587 is
+    ;; for TLS. This does not appear to be true.
+    ;; As long as the server is configured properly, both 587 (STARTTLS) and
+    ;; port 465 (Implicit TLS) are secure. The problem is a 587-based SMTP
+    ;; server _could_ disallow encrypted traffic, and the client could allow
+    ;; unencrypted traffic. That is a risk.
+    ;; See: https://mailtrap.io/blog/starttls-ssl-tls/
+    ;;
+    ;; We are choosing the protocol which require TLS from the start.
+    (smtpmail-smtp-service 465)
+    ;; This actually means TLS, if the remote server supports it.
+    (smtpmail-stream-type 'ssl))
+
+  (use-package mu4e
+    :ensure t
+    :commands (mu4e)
+    :custom
+    ;; Set mu4e as my mail user agent.
+    (mail-user-agent 'mu4e-user-agent)
+    (user-full-name "Gaelan D'costa")
+    ;; Apparently needed when using mbsync; see
+    ;; https://www.djcbsoftware.nl/code/mu/mu4e/Retrieving-mail.html#IMAP_002dsynchronization
+    ;; and https://pragmaticemacs.wordpress.com/2016/03/22/fixing-duplicate-uid-errors-when-using-mbsync-and-mu4e/
+    ;; Commonly used queries
+    (mu4e-bookmarks '(( :name "Inboxes" :query "maildir:/personal/Inbox OR maildir:/work/Inbox" :key 105)
+  		    (:name "Unread" :query "flag:unread AND (maildir:/personal/Inbox OR maildir:/work/Inbox)" :key 117 :favorite t :hide t)
+  		    (:name "Followup" :query "flag:flagged" :key 109)))
+    (mu4e-change-filenames-when-moving t)
+    ;; Use standard emacs completion function (i.e. vertico)
+    (mu4e-completing-read-function 'completing-read)
+    ;; Ask for context if it cannot be inferred from the message
+    (mu4e-compose-context-policy 'ask)
+    (mu4e-context-policy 'ask)
+    ;; Run this command when fetching mail
+    ;; To start, for speed, just get inbox messages
+    (mu4e-get-mail-command "mbsync inboxes")
+    ;; Gmail already saves sent messages, so don't bother.
+    (mu4e-sent-messages-behavior 'delete)
+    :config
+    ;; For whatever reason, this variable isn't customizable.
+    (setq mu4e-contexts
+  	(list
+  	 (make-mu4e-context
+      	  :name "personal"
+      	  ;; match-func is used to inspect the message in question and infer the
+      	  ;; string name of the mu4e context from it. We do this now by looking
+      	  ;; at the first-level directory in my maildir, since mbsync sets that
+      	  ;; up.
+      	  :match-func (lambda (msg)
+      			(when msg
+      			  (string-prefix-p "/personal"
+      					   (mu4e-message-field msg :maildir))))
+      	  :vars '(;; What is my email address in this context?
+    		  (user-mail-address . "gdcosta@gmail.com")
+  		  ;; SMTP username
+  		  (smtpmail-smtp-user . "gdcosta@gmail.com")
+      		  (mu4e-drafts-folder . "/personal/[Gmail]/Drafts")
+      		  (mu4e-refile-folder . "/personal/[Gmail]/All Mail")
+      		  (mu4e-sent-folder . "/personal/[Gmail]/Sent Mail")
+      		  (mu4e-trash-folder . "/personal/[Gmail]/Trash")))
+    	 (make-mu4e-context
+      	  :name "work"
+      	  :match-func (lambda (msg)
+      			(when msg
+      			  (string-prefix-p "/work"
+      					   (mu4e-message-field msg :maildir))))
+      	  :vars '(;; What is my email address in this context?
+    		  (user-mail-address . "gaelan@tulip.com")
+  		  ;; SMTP username
+  		  (smtpmail-smtp-user . "gaelan@tulip.com")
+      		  (mu4e-drafts-folder . "/work/[Gmail]/Drafts")
+      		  (mu4e-refile-folder . "/work/[Gmail]/All Mail")
+      		  (mu4e-sent-folder . "/work/[Gmail]/Sent Mail")
+      		  (mu4e-trash-folder . "/work/[Gmail]/Trash"))))))
+#+END_SRC
+** Large Language Models
+If you can't beat them; join them. Lean on the stochastic parrot when I want to generate text without caring aout whatever I am crafting, or when I want something good enough because I don't know how to craft it myself.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package ellama
+    :ensure t
+    :commands ellama-transient-main-menu)
+
+  (use-package gptel
+    :ensure t
+    :commands gptel
+    :custom
+    (gptel-model "llama3.1")
+    (gptel-backend (gptel-make-ollama "Ollama"
+  		   :host "localhost:11434"
+  		   :stream t
+  		   :models '(mistral:latest codellama:latest llama3.1))))
+#+END_SRC
+** Org
+#+BEGIN_SRC emacs-lisp :tangle yes
+      (use-package org
+        :ensure t
+        :hook (org-mode-hook . (lambda ()
+         			   (setq-local fill-column 80)
+         			   (visual-line-mode +1)))
+        :mode ("\\.org\\'" . org-mode)
+        :bind (("C-c a" . org-agenda)
+         	 ("C-c c" . org-capture)
+         	 ("C-c l" . org-store-link))
+        :config
+        ;; Enable org habits
+        (add-to-list 'org-modules 'org-habit t)
+        :custom
+        (org-agenda-custom-commands
+         '(("i" "Unprocessed tasks" todo "" ((org-agenda-files '("~/Documents/gtd/inbox.org"))))
+           ("n" "PersoNal Kanban" ((todo "DOING"
+      				   ((org-agenda-overriding-header "Currently doing")))
+      			     (agenda "")
+      			     (todo "WAITING"
+      				   ((org-agenda-overriding-header "Waiting for")))
+      			     (todo "NEXT"
+      				   ((org-agenda-overriding-header "On Deck")))
+      			     (tags-todo "TODO=\"ACTIVE\"&LEVEL=2"
+      					((org-agenda-overriding-header "Active Projects")))))
+           ("p" "Projects")))
+        (org-agenda-files '("~/Documents/gtd/gtd.org"
+      		      "~/Documents/gtd/tickler.org"
+         		      "~/Documents/gtd/gcal/personal.org"
+         		      "~/Documents/gtd/gcal/work.org"
+         		      "~/Documents/gtd/jira/CLOUD.org"))
+        (org-capture-templates
+         '(("t" "Task" entry (file "~/Documents/gtd/inbox.org") "* TODO %?")))
+        (org-refile-targets
+         '((("~/Documents/gtd/gtd.org") . (:maxlevel . 2))
+           (("~/Documents/gtd/inbox.org") . (:level . 1))))
+        (org-todo-keywords
+         ;; Sequence for individual items, extended for work jira workflow.
+         '((sequence "TODO(q)" "GROOM" "NEXT(w)" "DOING(e)" "WAIT(r@/!)" "|" "DONE(t!)" "HALTED(y@)")
+           ;; Sequence for personal projects.
+           (sequence "PLAN(a)" "READY(s)" "ACTIVE(d)" "PAUSED(f@/!)" "RETRO(g)" "|" "DONE(!)" "HALTED(@)"))))
+#+END_SRC
+*** org-crypt
+Allow for partial encryption of org files (i.e. specific headers), using a special tag.
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package org-crypt
+    :ensure nil
+    :after (org)
+    :custom
+    (org-crypt-key '("A815AC9D526EE85A" "E3E3EFF879DB7DF6"))
+    :config
+    (org-crypt-use-before-save-magic))
+#+END_SRC
+*** org-roam
+An implementation of Zettelkasten for org, inspired by org-roam
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package org-roam
+    :ensure t
+    :defer 2
+    ;; Use capital letters to create new log entries
+    :bind (("C-c j D" . org-roam-dailies-capture-date)
+  	 ;; Yesterday and today can be provided prefix numbers to move N days
+  	 ;; ahead or behind, including days that don't currently have an entry.
+  	 ("C-c j Y" . org-roam-dailies-capture-yesterday)
+  	 ("C-c j R" . org-roam-dailies-capture-tomorrow)
+  	 ("C-c j T" . org-roam-dailies-capture-today)
+  	 ;; We use lower-case to only view records, but each function is slightly different.
+  	 ;; We also always go to the log, because selecting a section is usually too much blockage.
+  	 ("C-c j d" . (lambda ()
+  			(interactive)
+  			(org-roam-dailies-capture-date t "j")))
+  	 ("C-c j y" . (lambda (n)
+  			(interactive "p")
+  			(org-roam-dailies-capture-yesterday n t "j")))
+  	 ("C-c j r" . (lambda (n)
+  			(interactive "p")
+  			(org-roam-dailies-capture-tomorrow n t "j")))
+  	 ("C-c j t" . (lambda ()
+  			(interactive)
+  			(org-roam-dailies-capture-today t "j")))
+  	 ;; Buttonmash combo for bullet journalling
+  	 ;; doesn't match my mnenomic scheme otherwise.
+  	 ("C-c j j" . (lambda ()
+  			(interactive)
+  			(org-roam-dailies-capture-today nil "j")))
+  	 ("C-c j k" . (lambda ()
+  			(interactive)
+  			(org-roam-dailies-capture-today nil "k")))
+  	 ("C-c j l" . (lambda ()
+  			(interactive)
+  			(org-roam-dailies-capture-today nil "l")))
+  	 ;; These combos find the N next or previous notes, regardless of
+  	 ;; whether days are skipped.
+  	 ("C-c j n" . org-roam-dailies-goto-next-note)
+  	 ("C-c j p" . org-roam-dailies-goto-previous-note)
+
+  	 ("C-c n b" . org-roam-buffer-toggle)
+  	 ("C-c n c" . org-id-get-create)
+  	 ("C-c n f" . org-roam-node-find)
+  	 ("C-c n i" . org-roam-node-insert)
+  	 ("C-c n r" . (lambda ()
+  			(interactive)
+  			(org-roam-node-random nil (lambda (node)
+  						    (and
+  						     (member "journal" (org-roam-node-tags node))
+  						     (not (member "literature" (org-roam-node-tags node)))))))))
+    :custom
+    (org-roam-directory "~/Documents/brain/notes")
+    (org-roam-dailies-directory "journal/")
+    (org-roam-node-display-template
+     (concat
+      ;; Org-roam template format
+      ;; ${title:*} -- print the title, using up as much free space as possible
+      "${title:*}"
+      ;; We use emacs properties to attach font colouring to our tag list
+      ;; We give a fixed amount of width to our node's tag list.
+      (propertize "${tags:20}" 'face 'org-tag)))
+    (org-roam-capture-templates
+     '(("b" "business" plain "%?"
+        :target (file+head "%<%Y%m%d%H%M%S>-${slug}.org"
+  			 "#+TITLE: ${title}\n#+FILETAGS: :business:"))
+       ("l" "literature" plain
+        (file "~/Documents/brain/templates/literature.org")
+        :target (file "${citar-citekey}.org")
+        :unnarrowed t)
+       ("p" "permanent" plain "%?"
+        :target (file+head "%<%Y%m%d%H%M%S>-${slug}.org"
+  			 "#+TITLE: ${title}\n")
+        :unnarrowed t)
+       ("r" "person" plain "%?"
+        :target (file+head "%<%Y%m%d%H%M%S>-${slug}.org.gpg"
+  			 "#+TITLE: ${title}\n#+FILETAGS: :person:"))
+       ("j" "project" entry
+        (file "~/Documents/brain/templates/project.org")
+        :target (file+olp "%<%Y%m%d%H%M%S>-${slug}.org" ("PLAN [/] ${title} :PROJECT:")))))
+    (org-roam-dailies-capture-templates
+     '(("j" "Regular Daily Bullet" plain
+        "** %<%0H:%M> %?"
+        :target (file+head+olp "%<%Y>/%<%0m>/%<%Y-%m-%d>.org" "#+TITLE: %<%Y-%0m-%0d, %A>\n#+FILETAGS: :journal:fleeting:" ("Log"))
+        :unnarrowed t)
+       ("l" "Knowledge Daily Bullet" plain
+        "** %<%0H:%M> %? :fleeting:"
+        :target (file+head+olp "%<%Y>/%<%0m>/%<%Y-%m-%d>.org" "#+TITLE: %<%Y-%0m-%0d, %A>\n#+FILETAGS: :journal:fleeting:" ("Log"))
+        :unnarrowed t)
+       ("k" "Tension Daily Bullet" plain
+        "** %<%0H:%M> %? :tension:"
+        :target (file+head+olp "%<%Y>/%<%0m>/%<%Y-%m-%d>.org" "#+TITLE: %<%Y-%0m-%0d, %A>\n#+FILETAGS: :journal:fleeting:" ("Log"))
+        :unnarrowed t)
+       ("d" "Morning Planning" plain
+        "* Morning Reflection\n** What are my most important tasks today?\n- %?\n"
+        :target (file+head "%<%Y>/%<%0m>/%<%0Y-%0m-%0d>.org" "#+TITLE: %<%Y-%0m-%0d, %A>\n#+FILETAGS: :journal:fleeting:")
+        :unnarrowed t)
+       ("w" "Weekly Reflection" plain
+        "* Weekly Reflection\n** What were my biggest wins this week?\n- %?\n** What did I learn this week?\n- \n** What unresolved tensions am I feeling this week? What is causing these tensions?\n- \n** What was I most grateful for this week? (Pick one thing and go deep.)\n- \n** How did I grow this week?\n- \n** What important things should I prioritize doing or learning this upcoming week?\n- \n** What are ADHD temptations I should timebox?\n- \n"
+        :target (file+head "%<%Y>/%<%0m>/%<%0Y-%0m-%0d>.org" "#+TITLE: %<%Y-%0m-%0d, %A>\n#+FILETAGS: :journal:fleeting:")
+        :unnarrowed t)
+       ("m" "Monthly Reflection" plain
+        "* Monthly Reflection\n** What were my biggest wins this month?\n- %?\n** What did I learn this month?\n- \n** What tensions did I remove this month?\n- \n** What was I most grateful for this month?\n- \n** How have I grown this month?\n- \n"
+        :target (file+head "%<%Y>/%<%0m>/%<%Y-%0m-%0d>.org" "#+TITLE: %<%Y-%0m-%0d, %A>\n#+FILETAGS: :journal:fleeting:")
+        :unnarrowed t)
+       ("y" "Yearly Reflection" plain
+        "* Yearly Reflection\n** What were my biggest wins this year?\n- %?\n** What did I learn this year?\n- \n** What tensions did I remove this year?\n- \n** What was I most grateful for this year?\n- \n** How have I grown this year?\n- \n"
+        :target (file+head "%<%Y>/%<%0m>/%<%Y-%0m-%0d>.org" "#+TITLE: %<%Y-%0m-%0d, %A>\n#+FILETAGS: :journal:fleeting:")
+        :unnarrowed t)))
+    :config
+    ;; Scan for org-roam changes and rebuild database opportunistically
+    (org-roam-db-autosync-mode))
+#+END_SRC
+
+Also enable a UI that makes overseeing my knowledge base easier.
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package websocket
+    :after org-roam)
+
+  (use-package org-roam-ui
+    :ensure t
+    :commands org-roam-ui-mode
+    :after org-roam
+    :init
+    (setq org-roam-ui-sync-theme t
+	  org-roam-ui-follow t
+	  org-roam-ui-update-on-save t
+	  org-roam-ui-open-on-start t))
+#+END_SRC
+
+navigating my org-roam corpus will involve me clicking through a bunch of links and then realizing I need to back-track. =winner-mode= is a simple way of implementing browser-like history, by allowing me to keep track of and navigate backwards and forwards through a history of what buffers were shown in each window.
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package emacs
+    :ensure nil
+    :demand 2
+    :config
+    (winner-mode +1))
+#+END_SRC
+
+
+Use deft for full-text search
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package deft
+    :ensure t
+    :after (org-roam)
+    :bind ("C-c n d" . deft)
+    :init
+    (defun gaelan/deft-parse-title (file contents)
+      (let ((re (concat
+		 ;; Match text of first headline found, strip away tags and
+		 ;; trailing whitespace
+		 "^\\*+\\s-+\\(.*?\\)\\s-*\\(?:\\s-:.*\\)?$"
+		 ;; or
+		 "\\|"
+		 ;; Match text of first #+TITLE: found
+		 "^\\s-*#\\+[Tt][Ii][Tt][Ll][Ee]:\\s-*\\(.*\\)$")))
+	(when (string-match re contents)
+	  (or (match-string 1 contents)
+	      (match-string 2 contents)))))
+    :config
+    (advice-add 'deft-parse-title :override #'gaelan/deft-parse-title)
+    :custom
+    (deft-default-extension "org")
+    (deft-directory org-roam-directory)
+    (deft-recursive t)
+    (deft-strip-summary-regexp (concat
+				;; Strip anything that looks like org property.
+				"^\\s-*:.*:\\s-*.*$"
+				;; Or
+				"\\|"
+				;; Strip anything that looks like #+KEYWORD
+				"^\\s-*#\\+.*:.*$"))
+    (deft-use-filename-as-title t))
+#+END_SRC
+*** org-noter
+A way to annotate PDF/ePubs using org mode
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package org-noter
+    :ensure t
+    :after (nov pdf-tools)
+    :commands org-noter)
+#+END_SRC
+
+*** org-transclusion
+Block-level editing/embedding, approximating the way Roam/logseq do it
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package org-transclusion
+    :after org
+    :ensure t
+    :bind (("C-c n a" . org-transclusion-add)
+	   ("C-c n t" . org-transclusion-mode)))
+#+END_SRC
+** Citations
+I am using the new [[https://orgmode.org/manual/Citations.html][org-cite]] system for working with bibliographic information
+
+Allow citar to work with org-roam particulars, including the ability to work at org-roam node levels (file or header IDs)
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package citar-org-roam
+    :ensure t
+    :bind (("C-c n n" . citar-create-note))
+    :diminish nil
+    :custom
+    (citar-bibliography '("~/Documents/brain/REFERENCES.bib"))
+    (citar-org-roam-note-title-template "${author} (${date}) - ${title}")
+    (citar-org-roam-capture-template-key "l")
+    :config
+    (citar-org-roam-mode))
+#+END_SRC
+** Google Calendar Integration
+Be able to fetch (and even set) events in my google calendar.
+
+Because org-gcal is stupid and because work is paranoid, I can only control one calendar at a time. As such I've set my work calendar to control my personal one.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package plstore
+    :ensure nil
+    :defer 2
+    :custom
+    (plstore-encrypt-to '("A815AC9D526EE85A" "E3E3EFF879DB7DF6")))
+
+  (use-package org-gcal
+    :ensure t
+    :after plstore
+    :defer 2
+    :init
+    (require 'auth-source)
+    (when-let* ((credential (car (auth-source-search :host "gcal-oauth-service"
+						     :type 'netrc
+						     :max 1)))
+	        (id (plist-get credential :client-id))
+	        (secret (plist-get credential :client-secret)))
+      (setq org-gcal-client-id id
+	    org-gcal-client-secret secret
+	    org-gcal-fetch-file-alist
+	    '(("gdcosta@gmail.com" .  "~/Documents/gtd/gcal/personal.org")
+	      ("gaelan@tulip.com" . "~/Documents/gtd/gcal/work.org")))))
+#+END_SRC
+** Tulip work integration
+I use JIRA at work; let's see if I can feed these into my task management flow
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package org-jira
+    :ensure t
+    :defer 2
+    :custom
+    (jiralib-url "https://tulipio.atlassian.net")
+    (org-jira-jira-status-to-org-keyword-alist '(("To Do" . "TODO")
+  					       ("Open" . "TODO")
+  					       ("To Groom" . "GROOM")
+  					       ("Ready For Work" . "NEXT")
+  					       ("In Progress" . "DOING")
+  					       ("Canceled" . "HALTED")
+  					       ("Done" . "DONE")))
+    (org-jira-update-issue-details-include-reporter nil)
+    (org-jira-working-dir "~/Documents/gtd/jira")
+    ;; Work doesn't use Jira's time tracker, so don't clobber my local clocking.
+    (org-jira-worklog-sync-p nil))
+#+END_SRC
+
+Also, I use slack; get at least important messages
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+  (use-package slack
+    :ensure t
+    :config
+    (slack-register-team :name "tulip"
+  		       :default t
+  		       :token (auth-source-pick-first-password
+  			       :host "tulip.slack.com"
+  			       :user "gaelan@tulip.com")
+  		       :cookie (auth-source-pick-first-password
+  				:host "tulip.slack.com"
+  				:user "gaelan@tulip.com^cookie")
+  		       :subscribed-channels '(war-room peace-room))
+    (slack-start))
+#+END_SRC
